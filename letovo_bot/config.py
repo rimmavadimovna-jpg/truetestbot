@@ -17,6 +17,18 @@ BANK_PATH = Path(os.getenv("LETOVO_BANK_PATH", str(DATA_DIR / "bank.sqlite")))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+# --- Хостинг на Vercel (serverless) ---
+# KV-хранилище Upstash Redis. Маркетплейс Vercel прокидывает переменные с
+# префиксом KV_REST_API_* (Vercel KV) либо UPSTASH_REDIS_REST_* — принимаем оба.
+KV_REST_API_URL = (os.getenv("KV_REST_API_URL", "")
+                   or os.getenv("UPSTASH_REDIS_REST_URL", ""))
+KV_REST_API_TOKEN = (os.getenv("KV_REST_API_TOKEN", "")
+                     or os.getenv("UPSTASH_REDIS_REST_TOKEN", ""))
+# Секрет для защиты cron-эндпойнта (Vercel шлёт его в заголовке Authorization).
+CRON_SECRET = os.getenv("CRON_SECRET", "")
+# Секрет вебхука Telegram (заголовок X-Telegram-Bot-Api-Secret-Token).
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+
 # --- Модели Anthropic ---
 # Сильная модель — для разовой офлайн-выверки банка.
 ANTHROPIC_MODEL_VERIFY = os.getenv("ANTHROPIC_MODEL_VERIFY", "claude-opus-4-8")

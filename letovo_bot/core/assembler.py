@@ -10,7 +10,7 @@ import sqlite3
 from typing import Optional
 
 from .. import config
-from . import db
+from . import db, userstore
 from .models import Task, TaskType
 
 
@@ -154,34 +154,29 @@ def validate_bank(conn: sqlite3.Connection) -> list[str]:
 # --------------------------------------------------------------------------- #
 # Адаптивный подбор дневного набора
 # --------------------------------------------------------------------------- #
-def weak_topics(conn: sqlite3.Connection, chat_id: int) -> dict[str, float]:
-    """Средний балл по темам для ученика (меньше — слабее, выше приоритет)."""
-    rows = conn.execute(
-        "SELECT topic, AVG(score) AS avg_score FROM attempts WHERE chat_id=? GROUP BY topic",
-        (chat_id,),
-    ).fetchall()
-    return {r["topic"]: (r["avg_score"] if r["avg_score"] is not None else 0.0) for r in rows}
+def weak_topics(chat_id: int) -> dict[str, float]:
+    """Средний балл по темам для ученика (меньше — слабее, выше приоритет).
+
+    Данные попыток ученика хранятся в KV (userstore), а не в банке SQLite.
+    """
+    return userstore.weak_topics(chat_id)
 
 
-def recent_task_ids(conn: sqlite3.Connection, chat_id: int, days: int) -> set[int]:
-    rows = conn.execute(
-        f"SELECT DISTINCT task_id FROM attempts WHERE chat_id=? "
-        f"AND ts >= datetime('now', '-{int(days)} days')",
-        (chat_id,),
-    ).fetchall()
-    return {r["task_id"] for r in rows}
+def recent_task_ids(chat_id: int, days: int) -> set[int]:
+    return userstore.recent_task_ids(chat_id, days)
 
 
 def build_daily_set(conn: sqlite3.Connection, chat_id: int,
                     n_min: Optional[int] = None, n_max: Optional[int] = None) -> list[Task]:
     """Собирает дневной набор: разные типы, приоритет слабым темам, без повторов.
 
+    Банк заданий читается из SQLite (conn), история ученика — из KV (userstore).
     Все возвращаемые задания проходят validate_task — иначе исключаются.
     """
     n_min = n_min or config.DAILY_TASK_MIN
     n_max = n_max or config.DAILY_TASK_MAX
-    avg = weak_topics(conn, chat_id)
-    recent = recent_task_ids(conn, chat_id, config.NO_REPEAT_DAYS)
+    avg = weak_topics(chat_id)
+    recent = recent_task_ids(chat_id, config.NO_REPEAT_DAYS)
 
     candidates = [t for t in db.all_tasks(conn, verified_only=True) if t.id not in recent]
     # подстраховка инвариантами
@@ -269,17 +264,18 @@ def course_day_set(conn: sqlite3.Connection, day: int) -> list[Task]:
     return selected
 
 
-def get_course_day(conn: sqlite3.Connection, chat_id: int) -> int:
-    row = conn.execute("SELECT course_day FROM users WHERE chat_id=?", (chat_id,)).fetchone()
-    return int(row["course_day"]) if row and row["course_day"] is not None else 0
+def get_course_day(chat_id: int) -> int:
+    """Текущий день курса ученика (хранится в KV)."""
+    return userstore.get_course_day(chat_id)
 
 
-def advance_course_day(conn: sqlite3.Connection, chat_id: int) -> None:
-    conn.execute("UPDATE users SET course_day = COALESCE(course_day, 0) + 1 WHERE chat_id=?",
-                 (chat_id,))
-    conn.commit()
+def advance_course_day(chat_id: int) -> None:
+    userstore.advance_course_day(chat_id)
 
 
 def build_course_today(conn: sqlite3.Connection, chat_id: int) -> list[Task]:
-    """Набор текущего дня курса для пользователя (по его course_day)."""
-    return course_day_set(conn, get_course_day(conn, chat_id))
+    """Набор текущего дня курса для пользователя (по его course_day).
+
+    День курса берётся из KV; сами задания дня — из банка (conn).
+    """
+    return course_day_set(conn, get_course_day(chat_id))

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/webhook.py": {
+      "memory": 1024,
+      "maxDuration": 60,
+      "includeFiles": "letovo_bot/data/bank.sqlite"
+    },
+    "api/cron.py": {
+      "memory": 1024,
+      "maxDuration": 300,
+      "includeFiles": "letovo_bot/data/bank.sqlite"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "0 7 * * *"
+    }
+  ]
+}

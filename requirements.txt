@@ -1,9 +1,10 @@
 # Рантайм бота
 aiogram>=3.4,<4
-aiosqlite>=0.19
-APScheduler>=3.10
 anthropic>=0.39
 pydantic>=2.5
+
+# KV-хранилище пользователей/попыток/сессий на Vercel (Upstash Redis, REST)
+upstash-redis>=1.1
 
 # Лингвистика (сборка банка + детекторы проверки)
 pymorphy3>=2.0

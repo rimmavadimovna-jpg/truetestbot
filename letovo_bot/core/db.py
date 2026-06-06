@@ -42,8 +42,18 @@ CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(task_type);
 """
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
+def connect(path: str | Path, read_only: bool = False) -> sqlite3.Connection:
+    """Подключение к банку.
+
+    read_only=True — для рантайма бота на serverless: файловая система Vercel
+    доступна только для чтения, поэтому банк открываем в режиме ro/immutable
+    (без создания журналов и попыток записи). Скрипты сборки/выверки и тесты
+    используют обычное (записываемое) подключение.
+    """
+    if read_only:
+        conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+    else:
+        conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

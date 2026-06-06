@@ -45,8 +45,16 @@ letovo_bot/
 pip install -r requirements.txt
 ```
 
-Python 3.11+. Ключевые зависимости: `aiogram` 3.x, `aiosqlite`, `APScheduler`,
-`anthropic`, `pydantic`, `pymorphy3` (морфология), `razdel` (токенизация).
+Python 3.11+. Ключевые зависимости: `aiogram` 3.x, `anthropic`, `pydantic`,
+`upstash-redis` (KV-хранилище учеников на serverless), `pymorphy3` (морфология),
+`razdel` (токенизация).
+
+## Хостинг
+
+- **Vercel (serverless)** — рекомендуемый способ, см. `deploy/VERCEL_SETUP.md`.
+  Вебхук (`api/webhook.py`) + ежедневный Cron (`api/cron.py`, 10:00 МСК) +
+  Upstash Redis для данных учеников; банк едет read-only файлом в бандле.
+- **Always-on сервер** (Oracle Cloud Free и т.п.) — см. `deploy/SERVER_SETUP.md`.
 
 ## Переменные окружения
 

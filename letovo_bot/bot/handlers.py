@@ -3,6 +3,10 @@
 Задания с множеством номеров (зад. 2, 6, 11) — inline-кнопки-тогглы + «Готово».
 Открытые ответы — текстом. После каждого ответа — мгновенная проверка
 конвейером §3 с разбором по критериям, эталоном и ссылкой на правило.
+
+Хранилище: банк заданий читается из SQLite (read-only), а данные ученика
+(профиль, попытки, активная сессия) — из KV (userstore), т.к. на serverless
+файловая система эфемерная.
 """
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ from aiogram.types import (CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, Message)
 
 from .. import config
-from ..core import assembler, checker, db
+from ..core import assembler, checker, db, userstore
 from ..core.llm import LLMJudge
 from ..core.models import MULTI_NUMBER_TYPES, Task, TaskType, Verdict
 from .session import SessionStore
@@ -24,38 +28,10 @@ router = Router()
 store = SessionStore()
 _judge = LLMJudge() if config.ENABLE_LLM_JUDGE else None
 
-# Ссылка на планировщик (устанавливается из main.py), чтобы /settings
-# перепланировал рассылку немедленно, без перезапуска бота.
-_scheduler = None
-
-
-def set_scheduler(scheduler) -> None:
-    global _scheduler
-    _scheduler = scheduler
-
 
 def _conn() -> sqlite3.Connection:
-    return db.connect(config.BANK_PATH)
-
-
-# --------------------------------------------------------------------------- #
-# Пользователи и попытки
-# --------------------------------------------------------------------------- #
-def ensure_user(conn: sqlite3.Connection, chat_id: int, name: str) -> None:
-    conn.execute(
-        "INSERT OR IGNORE INTO users (chat_id, name, timezone, daily_time) VALUES (?,?,?,?)",
-        (chat_id, name, config.DEFAULT_TIMEZONE, config.DEFAULT_DAILY_TIME),
-    )
-    conn.commit()
-
-
-def save_attempt(conn: sqlite3.Connection, chat_id: int, task: Task, v: Verdict, answer: str) -> None:
-    conn.execute(
-        "INSERT INTO attempts (chat_id, task_id, task_type, topic, score, user_answer, needs_review)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (chat_id, task.id, int(task.task_type), task.topic, v.score, answer, int(v.needs_review)),
-    )
-    conn.commit()
+    """Подключение к банку только для чтения (запись идёт в KV)."""
+    return db.connect(config.BANK_PATH, read_only=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -163,9 +139,8 @@ def render_verdict(v: Verdict) -> str:
 # --------------------------------------------------------------------------- #
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    conn = _conn()
-    ensure_user(conn, message.chat.id, message.from_user.full_name if message.from_user else "")
-    conn.close()
+    userstore.ensure_user(message.chat.id,
+                          message.from_user.full_name if message.from_user else "")
     await message.answer(
         "Привет! Я тренажёр по русскому языку — курс из 15 дней.\n"
         f"Каждый день в {config.DEFAULT_DAILY_TIME} ({config.DEFAULT_TIMEZONE}) я присылаю "
@@ -183,17 +158,13 @@ async def cmd_today(message: Message) -> None:
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message) -> None:
-    conn = _conn()
-    rows = conn.execute(
-        "SELECT topic, COUNT(*) n, AVG(score) avg FROM attempts WHERE chat_id=? GROUP BY topic "
-        "ORDER BY avg ASC", (message.chat.id,)).fetchall()
-    conn.close()
+    rows = userstore.topic_stats(message.chat.id)
     if not rows:
         await message.answer("Пока нет попыток. Нажми /today, чтобы начать.")
         return
     lines = ["<b>Прогресс по темам</b> (от слабых к сильным):"]
-    for r in rows:
-        lines.append(f"• {_esc(r['topic'])}: {r['avg']:.0%} (попыток: {r['n']})")
+    for topic, n, avg in rows:
+        lines.append(f"• {_esc(topic)}: {avg:.0%} (попыток: {n})")
     await message.answer("\n".join(lines))
 
 
@@ -216,55 +187,28 @@ async def cmd_theory(message: Message) -> None:
     await message.answer("\n".join(lines))
 
 
-def _reschedule(conn: sqlite3.Connection, chat_id: int) -> None:
-    """Перепланировать ежедневную рассылку пользователю по текущим настройкам."""
-    if _scheduler is None:
-        return
-    row = conn.execute("SELECT timezone, daily_time FROM users WHERE chat_id=?",
-                       (chat_id,)).fetchone()
-    if row:
-        _scheduler.schedule_user(chat_id, row["timezone"], row["daily_time"])
-
-
 @router.message(Command("settings"))
 async def cmd_settings(message: Message) -> None:
-    parts = (message.text or "").split()
-    conn = _conn()
-    ensure_user(conn, message.chat.id, "")
-    if len(parts) >= 3 and parts[1] == "time":
-        conn.execute("UPDATE users SET daily_time=? WHERE chat_id=?", (parts[2], message.chat.id))
-        conn.commit()
-        _reschedule(conn, message.chat.id)
-        await message.answer(f"Время рассылки обновлено: {parts[2]} (применено сразу).")
-    elif len(parts) >= 3 and parts[1] == "tz":
-        conn.execute("UPDATE users SET timezone=? WHERE chat_id=?", (parts[2], message.chat.id))
-        conn.commit()
-        _reschedule(conn, message.chat.id)
-        await message.answer(f"Часовой пояс обновлён: {parts[2]} (применено сразу).")
-    else:
-        row = conn.execute("SELECT timezone, daily_time FROM users WHERE chat_id=?",
-                           (message.chat.id,)).fetchone()
-        tz = row["timezone"] if row else config.DEFAULT_TIMEZONE
-        tm = row["daily_time"] if row else config.DEFAULT_DAILY_TIME
-        await message.answer(
-            f"Часовой пояс: {tz}\nВремя рассылки: {tm}\n\n"
-            "Изменить: <code>/settings time 10:00</code> или <code>/settings tz Europe/Moscow</code>")
-    conn.close()
+    userstore.ensure_user(message.chat.id)
+    await message.answer(
+        f"Часовой пояс: {config.DEFAULT_TIMEZONE}\n"
+        f"Время рассылки: {config.DEFAULT_DAILY_TIME} (фиксировано для всех).\n\n"
+        "Набор приходит автоматически раз в день. Получить вопросы прямо сейчас — /today."
+    )
 
 
 # --------------------------------------------------------------------------- #
 # Выдача набора и приём ответов
 # --------------------------------------------------------------------------- #
 async def send_daily(chat_id: int, bot) -> None:
-    conn = _conn()
-    ensure_user(conn, chat_id, "")
+    userstore.ensure_user(chat_id)
     # если набор уже идёт и не завершён — не начинаем новый день, продолжаем
     active = store.get(chat_id)
     if active is not None and not active.finished:
-        conn.close()
         await _send_current(chat_id, bot)
         return
-    day = assembler.get_course_day(conn, chat_id)        # 0-based
+    day = assembler.get_course_day(chat_id)              # 0-based
+    conn = _conn()
     tasks = assembler.build_course_today(conn, chat_id)
     conn.close()
     if not tasks:
@@ -297,10 +241,8 @@ async def _finish_day(chat_id: int, bot) -> None:
     s = store.get(chat_id)
     if s and s.day_scores:
         avg = sum(s.day_scores) / len(s.day_scores)
-        conn = _conn()
-        assembler.advance_course_day(conn, chat_id)       # переходим к следующему дню курса
-        new_day = assembler.get_course_day(conn, chat_id)
-        conn.close()
+        assembler.advance_course_day(chat_id)             # переходим к следующему дню курса
+        new_day = assembler.get_course_day(chat_id)
         tail = ("Это был последний день курса! 🎓" if new_day >= assembler.COURSE_DAYS
                 else "Возвращайтесь завтра за следующим набором — или сразу /today.")
         await bot.send_message(
@@ -316,6 +258,7 @@ async def on_toggle(cb: CallbackQuery) -> None:
         await cb.answer("Это задание уже не активно.")
         return
     selected = s.toggle(int(tid), int(n))
+    store.save(s)
     await cb.message.edit_reply_markup(reply_markup=numbers_keyboard(s.current, selected))
     await cb.answer()
 
@@ -352,11 +295,8 @@ async def on_quiz_answer(cb: CallbackQuery) -> None:
 
 @router.message(Command("restart"))
 async def cmd_restart(message: Message) -> None:
-    conn = _conn()
-    ensure_user(conn, message.chat.id, "")
-    conn.execute("UPDATE users SET course_day=0 WHERE chat_id=?", (message.chat.id,))
-    conn.commit()
-    conn.close()
+    userstore.ensure_user(message.chat.id)
+    userstore.reset_course_day(message.chat.id)
     store.clear(message.chat.id)
     await message.answer("Курс сброшен на день 1. Напишите /today, чтобы начать заново.")
 
@@ -375,9 +315,9 @@ async def _grade_and_advance(chat_id: int, bot, answer: str) -> None:
         return
     task = s.current
     verdict = checker.check(task, answer, judge=_judge)
-    conn = _conn()
-    save_attempt(conn, chat_id, task, verdict, answer)
-    conn.close()
+    userstore.save_attempt(chat_id, task.id, int(task.task_type), task.topic,
+                           verdict.score, verdict.needs_review)
     await bot.send_message(chat_id, render_verdict(verdict), parse_mode="HTML")
     s.advance(verdict.score)
+    store.save(s)
     await _send_current(chat_id, bot)

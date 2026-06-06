@@ -1,7 +1,7 @@
 """Тесты слоя сборки: валидация банка и адаптивный подбор набора."""
 from __future__ import annotations
 
-from letovo_bot.core import assembler, db
+from letovo_bot.core import assembler, db, userstore
 
 
 def test_validate_bank_no_errors(bank):
@@ -21,13 +21,10 @@ def test_build_daily_set_size_and_uniqueness(bank):
 def test_no_repeat_recent(bank):
     chat_id = 888
     tasks = assembler.build_daily_set(bank, chat_id, n_min=2, n_max=2)
-    # «проходим» эти задания
+    # «проходим» эти задания (попытки пишутся в KV-хранилище, не в банк)
     for t in tasks:
-        bank.execute(
-            "INSERT INTO attempts (chat_id, task_id, task_type, topic, score) VALUES (?,?,?,?,?)",
-            (chat_id, t.id, int(t.task_type), t.topic, 1.0))
-    bank.commit()
-    recent = assembler.recent_task_ids(bank, chat_id, days=14)
+        userstore.save_attempt(chat_id, t.id, int(t.task_type), t.topic, 1.0, False)
+    recent = assembler.recent_task_ids(chat_id, days=14)
     assert {t.id for t in tasks}.issubset(recent)
     next_set = assembler.build_daily_set(bank, chat_id, n_min=2, n_max=2)
     # недавно выданные не повторяются
@@ -38,9 +35,6 @@ def test_weak_topics_priority(bank):
     chat_id = 999
     all_t = db.all_tasks(bank, verified_only=True)
     weak = all_t[0]
-    bank.execute(
-        "INSERT INTO attempts (chat_id, task_id, task_type, topic, score) VALUES (?,?,?,?,?)",
-        (chat_id, weak.id, int(weak.task_type), weak.topic, 0.1))
-    bank.commit()
-    avg = assembler.weak_topics(bank, chat_id)
+    userstore.save_attempt(chat_id, weak.id, int(weak.task_type), weak.topic, 0.1, False)
+    avg = assembler.weak_topics(chat_id)
     assert avg[weak.topic] < 0.5

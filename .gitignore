@@ -6,8 +6,11 @@ __pycache__/
 venv/
 .env
 
-# Банк генерируется из семени (build_bank); в репозиторий не коммитим
-letovo_bot/data/bank.sqlite
+# Банк генерируется из семени (build_bank). Коммитим собранный файл, т.к. он
+# едет в бандле serverless-функций Vercel (read-only). Пересобрать:
+#   python -m letovo_bot.data.build_bank
+# (раскомментируйте строку ниже, если хотите вернуться к сборке-на-сервере)
+# letovo_bot/data/bank.sqlite
 
 # Артефакты выверки
 for_manual_review*.csv
