@@ -52,7 +52,7 @@ Python 3.11+. Ключевые зависимости: `aiogram` 3.x, `anthropic
 ## Хостинг
 
 - **Vercel (serverless)** — рекомендуемый способ, см. `deploy/VERCEL_SETUP.md`.
-  Вебхук (`api/webhook.py`) + ежедневный Cron (`api/cron.py`, 10:00 МСК) +
+  Вебхук (`api/webhook.py`) + ежедневный Cron (`api/cron.py`, 7:00 МСК) +
   Upstash Redis для данных учеников; банк едет read-only файлом в бандле.
 - **Always-on сервер** (Oracle Cloud Free и т.п.) — см. `deploy/SERVER_SETUP.md`.
 

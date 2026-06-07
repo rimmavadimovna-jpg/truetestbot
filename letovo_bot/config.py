@@ -37,7 +37,7 @@ ANTHROPIC_MODEL_JUDGE = os.getenv("ANTHROPIC_MODEL_JUDGE", "claude-haiku-4-5-202
 
 # --- Поведение бота ---
 DEFAULT_TIMEZONE = os.getenv("LETOVO_DEFAULT_TZ", "Europe/Moscow")
-DEFAULT_DAILY_TIME = os.getenv("LETOVO_DEFAULT_TIME", "10:00")
+DEFAULT_DAILY_TIME = os.getenv("LETOVO_DEFAULT_TIME", "07:00")
 
 # Чат администратора/учителя: туда приходят уведомления, когда дневной набор
 # завершает кто-то ДРУГОЙ (не сам админ) — с ником ученика, итогом и ошибками.
