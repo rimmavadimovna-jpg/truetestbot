@@ -257,11 +257,9 @@ async def send_catchup(chat_id: int, bot) -> None:
     catchup_day = assembler.CATCHUP_DAYS - remaining + 1
     day = assembler.get_course_day(chat_id)
     conn = _conn()
-    tasks = assembler.build_course_today(conn, chat_id)
+    tasks = assembler.build_course_today(conn, chat_id)   # полный набор дня курса
     conn.close()
-    # курсовой набор дня обрезаем до CATCHUP_COURSE_KEEP (7), чтобы 7 + 8 доп. = 15
-    tasks = assembler.trim_course_keep(tasks, assembler.CATCHUP_COURSE_KEEP)
-    extras = assembler.catchup_extra_set(catchup_day)   # доп. задания этого дня догона
+    extras = assembler.catchup_extra_set(catchup_day)     # полный блок доп. заданий дня догона
     all_tasks = tasks + extras
     if not all_tasks:
         userstore.set_catchup(chat_id, 0)

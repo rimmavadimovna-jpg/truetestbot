@@ -120,21 +120,8 @@ def test_catchup_extra_autocheck(clean_kv):
                 assert checker.check(t, "заведомонеправильно").score == 0.0
 
 
-def test_catchup_trim_keeps_all_themes(clean_kv):
-    """Обрезка курсового набора до 7 сохраняет все темы дня."""
-    conn = handlers._conn()
-    full = assembler.course_day_set(conn, 0)
-    conn.close()
-    assert len(full) == 9
-    trimmed = assembler.trim_course_keep(full, assembler.CATCHUP_COURSE_KEEP)
-    assert len(trimmed) == assembler.CATCHUP_COURSE_KEEP == 7
-    themes_full = {t.payload.get("theme") for t in full}
-    themes_trim = {t.payload.get("theme") for t in trimmed}
-    assert themes_full == themes_trim          # ни одна тема не потеряна
-
-
-def test_catchup_session_is_15(clean_kv):
-    """send_catchup кладёт в сессию ровно 15 заданий: 7 курса + 8 доп."""
+def test_catchup_session_is_17(clean_kv):
+    """send_catchup кладёт в сессию полный набор дня: 9 курса + 8 доп. = 17."""
     cid = 1234
     userstore.ensure_user(cid)
     userstore.set_catchup(cid, assembler.CATCHUP_DAYS)   # remaining=7 → день догона 1
@@ -142,9 +129,10 @@ def test_catchup_session_is_15(clean_kv):
     asyncio.run(handlers.send_catchup(cid, bot))
 
     s = handlers.store.get(cid)
+    course_n = 9                                          # полный курсовой набор дня
     extra_n = len(assembler.catchup_extra_set(1))         # 8
     assert extra_n == 8
-    assert len(s.tasks) == assembler.CATCHUP_COURSE_KEEP + extra_n == 15
+    assert len(s.tasks) == course_n + extra_n == 17
     # последние 8 заданий — наши доп. (синтетические id)
     assert all(t.id > 1000 for t in s.tasks[-extra_n:])
     intro = next(t for _, t in bot.messages if "Догоняем" in t)
