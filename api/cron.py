@@ -22,7 +22,36 @@ from aiogram.client.default import DefaultBotProperties   # noqa: E402
 
 from letovo_bot import config                             # noqa: E402
 from letovo_bot.core import userstore                     # noqa: E402
-from letovo_bot.bot.handlers import send_daily            # noqa: E402
+from letovo_bot.bot.handlers import send_catchup, send_daily  # noqa: E402
+
+# --------------------------------------------------------------------------- #
+# Разовое назначение «догона» пропущенных дней конкретному ученику.
+#
+# По просьбе преподавателя ученику @theoyhshs нужно заново выдать пропущенные
+# наборы — по одному в день в течение недели. Механизм: счётчик catchup в KV;
+# пока он > 0, крон выдаёт ученику по одному новому набору в день, продвигая
+# его вперёд (см. send_catchup). Назначаем счётчик один раз — флаг в KV не даёт
+# переустанавливать его при каждом запуске крона. После выдачи 7 наборов
+# счётчик обнуляется и ученик возвращается к обычному ходу курса.
+# Когда догон отработает, этот блок можно удалить.
+# --------------------------------------------------------------------------- #
+_CATCHUP_USERNAME = "theoyhshs"
+_CATCHUP_DAYS = 7
+_CATCHUP_INIT_FLAG = f"catchup_init:{_CATCHUP_USERNAME}"
+
+
+def _provision_catchup_once() -> None:
+    if userstore._exists(_CATCHUP_INIT_FLAG):
+        return
+    chat_id = userstore.find_chat_id_by_username(_CATCHUP_USERNAME)
+    if chat_id is None:
+        # ник ещё не в профиле (ученик не писал боту) — попробуем в следующий раз
+        print(f"[cron] догон: @{_CATCHUP_USERNAME} не найден по нику, повтор завтра")
+        return
+    userstore.set_catchup(chat_id, _CATCHUP_DAYS)
+    userstore._set(_CATCHUP_INIT_FLAG, "1")
+    print(f"[cron] догон: назначено {_CATCHUP_DAYS} наборов для "
+          f"@{_CATCHUP_USERNAME} (chat_id={chat_id})")
 
 
 async def _run() -> int:
@@ -30,9 +59,13 @@ async def _run() -> int:
               default=DefaultBotProperties(parse_mode="HTML"))
     sent = 0
     try:
+        _provision_catchup_once()
         for chat_id in userstore.all_chat_ids():
             try:
-                await send_daily(chat_id, bot)
+                if userstore.get_catchup(chat_id) > 0:
+                    await send_catchup(chat_id, bot)
+                else:
+                    await send_daily(chat_id, bot)
                 sent += 1
             except Exception as e:
                 print(f"[cron] ошибка рассылки для {chat_id}: {e}")

@@ -236,6 +236,40 @@ async def send_daily(chat_id: int, bot) -> None:
     await _send_current(chat_id, bot)
 
 
+async def send_catchup(chat_id: int, bot) -> None:
+    """Догоняющая рассылка: один новый набор в день, пока счётчик catchup > 0.
+
+    В отличие от send_daily, продвигает ученика вперёд, даже если предыдущий
+    набор не завершён: незаконченную сессию прошлого дня закрываем и переходим
+    к следующему дню курса. Так за неделю выдаются пропущенные дни — по одному
+    в день — вместо того чтобы бесконечно пересылать один и тот же застрявший
+    набор. Завершение набора учеником обрабатывается обычным путём
+    (_finish_day): прогресс и уведомление администратору работают как всегда.
+    """
+    userstore.ensure_user(chat_id)
+    active = store.get(chat_id)
+    if active is not None and not active.finished:
+        # предыдущий догоняющий набор не доведён до конца — двигаемся дальше
+        assembler.advance_course_day(chat_id)
+        store.clear(chat_id)
+    day = assembler.get_course_day(chat_id)
+    conn = _conn()
+    tasks = assembler.build_course_today(conn, chat_id)
+    conn.close()
+    if not tasks:
+        userstore.set_catchup(chat_id, 0)
+        await bot.send_message(
+            chat_id, "🎓 Курс из 15 дней пройден! Можно начать заново — напишите /restart.")
+        return
+    store.start(chat_id, tasks)
+    await bot.send_message(
+        chat_id,
+        f"📚 Догоняем пропущенное — день {day + 1} из {assembler.COURSE_DAYS}: "
+        f"{len(tasks)} вопросов. Поехали!")
+    await _send_current(chat_id, bot)
+    userstore.decrement_catchup(chat_id)
+
+
 async def _send_current(chat_id: int, bot) -> None:
     s = store.get(chat_id)
     if s is None or s.finished:

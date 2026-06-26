@@ -196,6 +196,45 @@ def reset_course_day(chat_id: int) -> None:
     set_user_field(chat_id, "course_day", 0)
 
 
+# --- режим «догона» пропущенных дней --- #
+# Счётчик: сколько ещё дней крон должен выдавать ученику по одному набору в день,
+# продвигая его вперёд даже без завершения предыдущего набора. 0 → обычная выдача.
+def _catchup_key(chat_id: int) -> str: return f"catchup:{chat_id}"
+
+
+def get_catchup(chat_id: int) -> int:
+    v = _get(_catchup_key(chat_id))
+    try:
+        return int(v) if v is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_catchup(chat_id: int, n: int) -> None:
+    _set(_catchup_key(chat_id), str(max(0, int(n))))
+
+
+def decrement_catchup(chat_id: int) -> int:
+    n = max(0, get_catchup(chat_id) - 1)
+    set_catchup(chat_id, n)
+    return n
+
+
+def find_chat_id_by_username(username: str) -> Optional[int]:
+    """chat_id ученика по Telegram-нику (без учёта @ и регистра) или None.
+
+    Ник попадает в профиль через remember_user при любом взаимодействии ученика
+    с ботом. Если ученик ни разу не писал боту после появления этого поля —
+    ник может отсутствовать, тогда вернётся None.
+    """
+    u = username.lstrip("@").lower()
+    for chat_id in all_chat_ids():
+        profile = get_user(chat_id) or {}
+        if (profile.get("username") or "").lower() == u:
+            return chat_id
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Попытки (статистика)
 # --------------------------------------------------------------------------- #
