@@ -77,16 +77,23 @@ def test_catchup_advances_each_call_without_completion(clean_kv):
 
 
 def test_catchup_extra_set_loads_all_days(clean_kv):
-    """Каждый из 7 дней догона даёт непустой набор автопроверяемых QUIZ-заданий."""
+    """Каждый день догона даёт 8 автопроверяемых QUIZ-заданий (MCQ + открытые)."""
     for d in range(1, assembler.CATCHUP_DAYS + 1):
         tasks = assembler.catchup_extra_set(d)
-        assert tasks, f"день догона {d}: пусто"
+        assert len(tasks) == 8, f"день догона {d}: ожидалось 8, получено {len(tasks)}"
         for t in tasks:
             assert int(t.task_type) == int(TaskType.QUIZ)
             assert t.payload.get("stem")
-            # MCQ: верный номер в пределах вариантов
             correct = t.answer.get("correct")
-            assert correct and 1 <= int(correct) <= len(t.payload["options"])
+            if correct:                                   # MCQ
+                assert 1 <= int(correct) <= len(t.payload["options"])
+            else:                                         # открытый (инфинитив)
+                assert t.answer.get("answer_text")
+                assert not t.payload.get("options")
+    # ровно 7 открытых вопросов на инфинитив (по одному в день)
+    open_total = sum(1 for d in range(1, assembler.CATCHUP_DAYS + 1)
+                     for t in assembler.catchup_extra_set(d) if not t.answer.get("correct"))
+    assert open_total == 7
     # вне диапазона — пусто
     assert assembler.catchup_extra_set(0) == []
     assert assembler.catchup_extra_set(assembler.CATCHUP_DAYS + 1) == []
@@ -98,17 +105,36 @@ def test_catchup_extra_set_loads_all_days(clean_kv):
 
 
 def test_catchup_extra_autocheck(clean_kv):
-    """Доп. задания реально проверяются автоматически: верный вариант → 1.0, иной → 0.0."""
+    """Доп. задания проверяются автоматически: и MCQ, и открытые (инфинитив)."""
     for d in range(1, assembler.CATCHUP_DAYS + 1):
         for t in assembler.catchup_extra_set(d):
-            correct = int(t.answer["correct"])
-            assert checker.check(t, str(correct)).score == 1.0
-            wrong = 1 if correct != 1 else 2
-            assert checker.check(t, str(wrong)).score == 0.0
+            if t.answer.get("correct"):                   # MCQ
+                correct = int(t.answer["correct"])
+                assert checker.check(t, str(correct)).score == 1.0
+                wrong = 1 if correct != 1 else 2
+                assert checker.check(t, str(wrong)).score == 0.0
+            else:                                         # открытый: вписать инфинитив
+                ans = t.answer["answer_text"]
+                assert checker.check(t, ans).score == 1.0
+                assert checker.check(t, ans.upper() + "  ").score == 1.0   # регистр/пробелы не важны
+                assert checker.check(t, "заведомонеправильно").score == 0.0
 
 
-def test_catchup_appends_extras_to_session(clean_kv):
-    """send_catchup кладёт в сессию набор курса + доп. задания этого дня догона."""
+def test_catchup_trim_keeps_all_themes(clean_kv):
+    """Обрезка курсового набора до 7 сохраняет все темы дня."""
+    conn = handlers._conn()
+    full = assembler.course_day_set(conn, 0)
+    conn.close()
+    assert len(full) == 9
+    trimmed = assembler.trim_course_keep(full, assembler.CATCHUP_COURSE_KEEP)
+    assert len(trimmed) == assembler.CATCHUP_COURSE_KEEP == 7
+    themes_full = {t.payload.get("theme") for t in full}
+    themes_trim = {t.payload.get("theme") for t in trimmed}
+    assert themes_full == themes_trim          # ни одна тема не потеряна
+
+
+def test_catchup_session_is_15(clean_kv):
+    """send_catchup кладёт в сессию ровно 15 заданий: 7 курса + 8 доп."""
     cid = 1234
     userstore.ensure_user(cid)
     userstore.set_catchup(cid, assembler.CATCHUP_DAYS)   # remaining=7 → день догона 1
@@ -116,10 +142,10 @@ def test_catchup_appends_extras_to_session(clean_kv):
     asyncio.run(handlers.send_catchup(cid, bot))
 
     s = handlers.store.get(cid)
-    course_n = 9          # курс: 9 QUIZ-вопросов в день
-    extra_n = len(assembler.catchup_extra_set(1))
-    assert len(s.tasks) == course_n + extra_n
-    # последние extra_n заданий — наши доп. (синтетические id)
+    extra_n = len(assembler.catchup_extra_set(1))         # 8
+    assert extra_n == 8
+    assert len(s.tasks) == assembler.CATCHUP_COURSE_KEEP + extra_n == 15
+    # последние 8 заданий — наши доп. (синтетические id)
     assert all(t.id > 1000 for t in s.tasks[-extra_n:])
     intro = next(t for _, t in bot.messages if "Догоняем" in t)
     assert f"+ {extra_n} доп. заданий" in intro

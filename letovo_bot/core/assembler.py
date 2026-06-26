@@ -293,6 +293,9 @@ def build_course_today(conn: sqlite3.Connection, chat_id: int) -> list[Task]:
 import json as _json
 
 CATCHUP_DAYS = 7
+# Сколько вопросов курса оставлять в наборе дня догона (остальное — доп. задания).
+# Курсовой день — 9 вопросов; берём 7, чтобы 7 + 8 доп. = 15 заданий в день.
+CATCHUP_COURSE_KEEP = 7
 _CATCHUP_JSON = config.DATA_DIR / "catchup_questions.json"
 _catchup_cache: Optional[dict] = None
 
@@ -326,9 +329,33 @@ def catchup_extra_set(day_number: int) -> list[Task]:
             topic=it.get("topic", "Дополнительно"),
             difficulty=1,
             payload={"stem": it["stem"], "options": it.get("options", [])},
-            answer={"correct": it.get("correct"), "answer_text": None,
+            answer={"correct": it.get("correct"),
+                    "answer_text": it.get("answer_text"),   # для открытых вопросов (инфинитив)
                     "explanation": it.get("expl", "")},
             source="Догон: дополнительные задания (data/catchup_questions.json)",
             verified=True,
         ))
     return tasks
+
+
+def trim_course_keep(tasks: list[Task], n: int) -> list[Task]:
+    """Обрезает набор курса до n вопросов, сохраняя представленность всех тем.
+
+    Сначала берёт по одному вопросу каждой темы (в исходном порядке), затем
+    добивает до n остальными. Порядок выдачи сохраняется. Если задач ≤ n —
+    возвращает как есть.
+    """
+    if len(tasks) <= n:
+        return tasks
+    keep_ids: set[int] = set()
+    seen_themes: set[int] = set()
+    for t in tasks:                       # по одному на тему
+        th = int(t.payload.get("theme", 0))
+        if th not in seen_themes:
+            seen_themes.add(th)
+            keep_ids.add(t.id)
+    for t in tasks:                       # добиваем до n
+        if len(keep_ids) >= n:
+            break
+        keep_ids.add(t.id)
+    return [t for t in tasks if t.id in keep_ids][:n]
