@@ -25,33 +25,35 @@ from letovo_bot.core import userstore                     # noqa: E402
 from letovo_bot.bot.handlers import send_catchup, send_daily  # noqa: E402
 
 # --------------------------------------------------------------------------- #
-# Разовое назначение «догона» пропущенных дней конкретному ученику.
+# Разовое назначение «догона» пропущенных дней.
 #
 # По просьбе преподавателя ученику @theoyhshs нужно заново выдать пропущенные
-# наборы — по одному в день в течение недели. Механизм: счётчик catchup в KV;
-# пока он > 0, крон выдаёт ученику по одному новому набору в день, продвигая
-# его вперёд (см. send_catchup). Назначаем счётчик один раз — флаг в KV не даёт
-# переустанавливать его при каждом запуске крона. После выдачи 7 наборов
-# счётчик обнуляется и ученик возвращается к обычному ходу курса.
-# Когда догон отработает, этот блок можно удалить.
+# наборы — по одному в день в течение недели. Тот же набор дублируется
+# преподавателю @rimmarapp (чтобы видеть/проходить задания самой). Механизм:
+# счётчик catchup в KV; пока он > 0, крон выдаёт пользователю по одному набору
+# в день, продвигая его вперёд (см. send_catchup). Назначаем счётчик один раз
+# на каждого — флаг в KV не даёт переустанавливать его при каждом запуске крона.
+# После выдачи 7 наборов счётчик обнуляется. Когда догон отработает, блок можно
+# удалить.
 # --------------------------------------------------------------------------- #
-_CATCHUP_USERNAME = "theoyhshs"
+_CATCHUP_USERNAMES = ["theoyhshs", "rimmarapp"]   # ученик + дубль преподавателю
 _CATCHUP_DAYS = 7
-_CATCHUP_INIT_FLAG = f"catchup_init:{_CATCHUP_USERNAME}"
 
 
 def _provision_catchup_once() -> None:
-    if userstore._exists(_CATCHUP_INIT_FLAG):
-        return
-    chat_id = userstore.find_chat_id_by_username(_CATCHUP_USERNAME)
-    if chat_id is None:
-        # ник ещё не в профиле (ученик не писал боту) — попробуем в следующий раз
-        print(f"[cron] догон: @{_CATCHUP_USERNAME} не найден по нику, повтор завтра")
-        return
-    userstore.set_catchup(chat_id, _CATCHUP_DAYS)
-    userstore._set(_CATCHUP_INIT_FLAG, "1")
-    print(f"[cron] догон: назначено {_CATCHUP_DAYS} наборов для "
-          f"@{_CATCHUP_USERNAME} (chat_id={chat_id})")
+    for uname in _CATCHUP_USERNAMES:
+        flag = f"catchup_init:{uname}"
+        if userstore._exists(flag):
+            continue
+        chat_id = userstore.find_chat_id_by_username(uname)
+        if chat_id is None:
+            # ник ещё не в профиле (не писал боту) — попробуем в следующий раз
+            print(f"[cron] догон: @{uname} не найден по нику, повтор завтра")
+            continue
+        userstore.set_catchup(chat_id, _CATCHUP_DAYS)
+        userstore._set(flag, "1")
+        print(f"[cron] догон: назначено {_CATCHUP_DAYS} наборов для "
+              f"@{uname} (chat_id={chat_id})")
 
 
 async def _run() -> int:
