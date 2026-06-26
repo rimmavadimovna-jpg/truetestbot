@@ -252,20 +252,28 @@ async def send_catchup(chat_id: int, bot) -> None:
         # предыдущий догоняющий набор не доведён до конца — двигаемся дальше
         assembler.advance_course_day(chat_id)
         store.clear(chat_id)
+    # какой это по счёту день догона (1..CATCHUP_DAYS): счётчик идёт от CATCHUP_DAYS к 0
+    remaining = userstore.get_catchup(chat_id)
+    catchup_day = assembler.CATCHUP_DAYS - remaining + 1
     day = assembler.get_course_day(chat_id)
     conn = _conn()
     tasks = assembler.build_course_today(conn, chat_id)
     conn.close()
-    if not tasks:
+    extras = assembler.catchup_extra_set(catchup_day)   # доп. задания этого дня догона
+    all_tasks = tasks + extras
+    if not all_tasks:
         userstore.set_catchup(chat_id, 0)
         await bot.send_message(
             chat_id, "🎓 Курс из 15 дней пройден! Можно начать заново — напишите /restart.")
         return
-    store.start(chat_id, tasks)
-    await bot.send_message(
-        chat_id,
-        f"📚 Догоняем пропущенное — день {day + 1} из {assembler.COURSE_DAYS}: "
-        f"{len(tasks)} вопросов. Поехали!")
+    store.start(chat_id, all_tasks)
+    if tasks:
+        intro = (f"📚 Догоняем пропущенное — день {day + 1} из {assembler.COURSE_DAYS}: "
+                 f"{len(tasks)} вопросов курса")
+        intro += (f" + {len(extras)} доп. заданий. Поехали!" if extras else ". Поехали!")
+    else:
+        intro = f"📚 Дополнительные задания на сегодня: {len(extras)}. Поехали!"
+    await bot.send_message(chat_id, intro)
     await _send_current(chat_id, bot)
     userstore.decrement_catchup(chat_id)
 

@@ -4,12 +4,12 @@
     "api/webhook.py": {
       "memory": 1024,
       "maxDuration": 60,
-      "includeFiles": "letovo_bot/data/bank.sqlite"
+      "includeFiles": "letovo_bot/data/{bank.sqlite,catchup_questions.json}"
     },
     "api/cron.py": {
       "memory": 1024,
       "maxDuration": 300,
-      "includeFiles": "letovo_bot/data/bank.sqlite"
+      "includeFiles": "letovo_bot/data/{bank.sqlite,catchup_questions.json}"
     }
   },
   "crons": [

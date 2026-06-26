@@ -279,3 +279,56 @@ def build_course_today(conn: sqlite3.Connection, chat_id: int) -> list[Task]:
     День курса берётся из KV; сами задания дня — из банка (conn).
     """
     return course_day_set(conn, get_course_day(chat_id))
+
+
+# --------------------------------------------------------------------------- #
+# Дополнительные задания «догона» (вне основного курса)
+#
+# Это отдельный набор QUIZ-вопросов (фразеологизмы + автопроверяемые задания
+# по типам 2/4/6/7/10), который выдаётся ученику ТОЛЬКО в дни догона, поверх
+# набора курса. Хранится в data/catchup_questions.json: ключ — номер дня догона
+# (1..CATCHUP_DAYS), значение — список вопросов. В основной 15-дневный курс
+# (темы 1–6) эти задания не попадают.
+# --------------------------------------------------------------------------- #
+import json as _json
+
+CATCHUP_DAYS = 7
+_CATCHUP_JSON = config.DATA_DIR / "catchup_questions.json"
+_catchup_cache: Optional[dict] = None
+
+
+def _load_catchup() -> dict:
+    global _catchup_cache
+    if _catchup_cache is None:
+        try:
+            with open(_CATCHUP_JSON, encoding="utf-8") as f:
+                _catchup_cache = _json.load(f)
+        except (OSError, ValueError) as e:  # файла нет/битый — работаем без доп. заданий
+            print(f"[assembler] не удалось загрузить {_CATCHUP_JSON}: {e}")
+            _catchup_cache = {}
+    return _catchup_cache
+
+
+def catchup_extra_set(day_number: int) -> list[Task]:
+    """Доп. задания (QUIZ) для дня догона day_number (1..CATCHUP_DAYS).
+
+    Возвращает готовые Task-объекты типа QUIZ с автопроверкой. Вне диапазона
+    дней — пустой список.
+    """
+    if day_number < 1 or day_number > CATCHUP_DAYS:
+        return []
+    items = _load_catchup().get(str(day_number)) or []
+    tasks: list[Task] = []
+    for pos, it in enumerate(items):
+        tasks.append(Task(
+            id=700000 + day_number * 100 + pos,   # синтетический id, не пересекается с банком
+            task_type=TaskType.QUIZ,
+            topic=it.get("topic", "Дополнительно"),
+            difficulty=1,
+            payload={"stem": it["stem"], "options": it.get("options", [])},
+            answer={"correct": it.get("correct"), "answer_text": None,
+                    "explanation": it.get("expl", "")},
+            source="Догон: дополнительные задания (data/catchup_questions.json)",
+            verified=True,
+        ))
+    return tasks
