@@ -32,6 +32,8 @@ class DailySession:
     # выбранные номера для заданий с inline-тогглами (по task_id)
     selected_numbers: dict[int, set[int]] = field(default_factory=dict)
     day_scores: list[float] = field(default_factory=list)
+    # подробные записи ответов для отчёта преподавателю (вопрос, ответ, верно, эталон)
+    records: list[dict] = field(default_factory=list)
 
     @property
     def current(self) -> Task | None:
@@ -61,6 +63,7 @@ class DailySession:
             "index": self.index,
             "selected_numbers": {str(k): sorted(v) for k, v in self.selected_numbers.items()},
             "day_scores": self.day_scores,
+            "records": self.records,
         }
 
     @classmethod
@@ -72,6 +75,7 @@ class DailySession:
             selected_numbers={int(k): set(v)
                               for k, v in (data.get("selected_numbers") or {}).items()},
             day_scores=list(data.get("day_scores") or []),
+            records=list(data.get("records") or []),
         )
 
 

@@ -10,7 +10,9 @@ import asyncio
 
 import pytest
 
+from letovo_bot import config
 from letovo_bot.bot import handlers
+from letovo_bot.bot.session import DailySession
 from letovo_bot.core import assembler, checker, userstore
 from letovo_bot.core.models import TaskType
 
@@ -118,6 +120,62 @@ def test_catchup_extra_autocheck(clean_kv):
                 assert checker.check(t, ans).score == 1.0
                 assert checker.check(t, ans.upper() + "  ").score == 1.0   # регистр/пробелы не важны
                 assert checker.check(t, "заведомонеправильно").score == 0.0
+
+
+def test_quiz_no_internal_signature(clean_kv):
+    """У доп. заданий нет внутренней «подписи» (Правило/путь к файлу) для ученика."""
+    for d in range(1, assembler.CATCHUP_DAYS + 1):
+        for t in assembler.catchup_extra_set(d):
+            assert t.source == ""
+            v = checker.check(t, "1")
+            assert v.rule_source is None                  # строки «📖 Правило: …» не будет
+
+
+def test_full_report_to_admin(clean_kv):
+    """Преподавателю уходит полный отчёт: вопросы, ответы ученика и правильные ответы."""
+    cid = 999
+    assert cid != config.ADMIN_CHAT_ID
+    userstore.remember_user(cid, name="Фёдор", username="theoyhshs")
+    s = DailySession(chat_id=cid, tasks=[], index=2, day_scores=[1.0, 0.0])
+    s.records = [
+        {"topic": "Спряжение", "stem": "Какая буква пропущена: ты кле_шь конверт?",
+         "answer": "и", "correct": True, "ref": "2) и"},
+        {"topic": "Грамматические нормы", "stem": "В каком предложении ошибка?",
+         "answer": "Не ложи вещи на кровать.", "correct": False,
+         "ref": "Б) Не ложи вещи на кровать. — верно «класть»"},
+    ]
+    bot = FakeBot()
+    asyncio.run(handlers._notify_admin(bot, cid, s, 0.5))
+
+    sent_to = {c for c, _ in bot.messages}
+    assert sent_to == {config.ADMIN_CHAT_ID}              # отчёт уходит преподавателю
+    full = "\n".join(t for _, t in bot.messages)
+    assert "полный отчёт" in full and "@theoyhshs" in full
+    assert "Какая буква пропущена: ты кле_шь конверт?" in full   # сам вопрос
+    assert "Не ложи вещи на кровать." in full                    # ответ ученика
+    assert "Правильно:" in full                                  # правильный ответ для ошибки
+    assert "1 из 2 верно" in full
+
+    # сам админ не получает отчёт о себе
+    bot2 = FakeBot()
+    asyncio.run(handlers._notify_admin(bot2, config.ADMIN_CHAT_ID, s, 0.5))
+    assert bot2.messages == []
+
+
+def test_answer_record_mcq_and_open(clean_kv):
+    """_answer_record показывает выбранный вариант текстом, а открытый — как ввели."""
+    day = assembler.catchup_extra_set(1)
+    mcq = next(t for t in day if t.answer.get("correct"))
+    openq = next(t for t in day if not t.answer.get("correct"))
+    # MCQ: ответ номером → в записи текст выбранного варианта
+    rec = handlers._answer_record(mcq, str(mcq.answer["correct"]), checker.check(mcq, str(mcq.answer["correct"])))
+    assert rec["answer"] == mcq.payload["options"][mcq.answer["correct"] - 1]
+    assert rec["correct"] is True
+    # открытый: как ввёл ученик
+    rec2 = handlers._answer_record(openq, "странныйОтвет", checker.check(openq, "странныйОтвет"))
+    assert rec2["answer"] == "странныйОтвет"
+    assert rec2["correct"] is False
+    assert rec2["ref"]                                    # есть правильный ответ-эталон
 
 
 def test_catchup_session_is_17(clean_kv):

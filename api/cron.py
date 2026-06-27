@@ -28,16 +28,18 @@ from letovo_bot.bot.handlers import send_catchup, send_daily  # noqa: E402
 # Разовое назначение «догона» пропущенных дней.
 #
 # По просьбе преподавателя ученику @theoyhshs нужно заново выдать пропущенные
-# наборы — по одному в день в течение недели. Тот же набор дублируется
-# преподавателю @rimmarapp (чтобы видеть/проходить задания самой). Механизм:
-# счётчик catchup в KV; пока он > 0, крон выдаёт пользователю по одному набору
-# в день, продвигая его вперёд (см. send_catchup). Назначаем счётчик один раз
-# на каждого — флаг в KV не даёт переустанавливать его при каждом запуске крона.
-# После выдачи 7 наборов счётчик обнуляется. Когда догон отработает, блок можно
-# удалить.
+# наборы — по одному в день в течение недели. Механизм: счётчик catchup в KV;
+# пока он > 0, крон выдаёт ученику по одному набору в день, продвигая его вперёд
+# (см. send_catchup). Назначаем счётчик один раз — флаг в KV не даёт
+# переустанавливать его при каждом запуске крона. После выдачи 7 наборов счётчик
+# обнуляется. Когда догон отработает, блок можно удалить.
+#
+# Преподавателю (@rimmarapp / ADMIN_CHAT_ID) задания НЕ шлём — он получает только
+# подробный отчёт по ученику (см. _notify_admin), поэтому исключаем его из выдачи.
 # --------------------------------------------------------------------------- #
-_CATCHUP_USERNAMES = ["theoyhshs", "rimmarapp"]   # ученик + дубль преподавателю
+_CATCHUP_USERNAMES = ["theoyhshs"]
 _CATCHUP_DAYS = 7
+_NO_TASKS_USERNAME = "rimmarapp"   # преподавателю задания не отправляем
 
 
 def _provision_catchup_once() -> None:
@@ -62,7 +64,16 @@ async def _run() -> int:
     sent = 0
     try:
         _provision_catchup_once()
+        # кому НЕ шлём задания (преподаватель/админ — он получает только отчёт)
+        skip: set[int] = set()
+        if config.ADMIN_CHAT_ID:
+            skip.add(config.ADMIN_CHAT_ID)
+        teacher_id = userstore.find_chat_id_by_username(_NO_TASKS_USERNAME)
+        if teacher_id is not None:
+            skip.add(teacher_id)
         for chat_id in userstore.all_chat_ids():
+            if chat_id in skip:
+                continue
             try:
                 if userstore.get_catchup(chat_id) > 0:
                     await send_catchup(chat_id, bot)

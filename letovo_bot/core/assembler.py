@@ -329,7 +329,7 @@ def catchup_extra_set(day_number: int) -> list[Task]:
             answer={"correct": it.get("correct"),
                     "answer_text": it.get("answer_text"),   # для открытых вопросов (инфинитив)
                     "explanation": it.get("expl", "")},
-            source="Догон: дополнительные задания (data/catchup_questions.json)",
+            source="",   # без внутренней «подписи» — у ученика не показываем
             verified=True,
         ))
     return tasks

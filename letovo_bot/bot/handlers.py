@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from html import escape as _esc
 
@@ -309,9 +310,11 @@ async def _finish_day(chat_id: int, bot) -> None:
 
 
 async def _notify_admin(bot, chat_id: int, s, avg: float) -> None:
-    """Уведомить администратора, если набор завершил кто-то другой (не админ).
+    """Прислать преподавателю (ADMIN_CHAT_ID) ПОЛНЫЙ отчёт за день ученика.
 
-    Шлёт ник ученика, итог дня и разбивку ошибок по темам за этот набор.
+    Не сводка по темам, а весь набор: каждый вопрос, ответ ученика, верно/неверно
+    и правильный ответ для ошибочных. Не шлётся, если набор завершил сам админ.
+    Длинный отчёт отправляется несколькими сообщениями (лимит Telegram ~4096).
     """
     admin = config.ADMIN_CHAT_ID
     if not admin or chat_id == admin:
@@ -320,29 +323,45 @@ async def _notify_admin(bot, chat_id: int, s, avg: float) -> None:
     uname = profile.get("username")
     who = f"@{uname}" if uname else (profile.get("name") or f"id {chat_id}")
 
-    counts: dict[str, int] = {}
-    wrong: dict[str, int] = {}
-    for task, score in zip(s.tasks, s.day_scores):
-        counts[task.topic] = counts.get(task.topic, 0) + 1
-        if score < 1.0:
-            wrong[task.topic] = wrong.get(task.topic, 0) + 1
-    total = len(s.day_scores)
-    correct = sum(1 for sc in s.day_scores if sc >= 1.0)
+    recs = s.records or []
+    total = len(recs) or len(s.day_scores)
+    correct = (sum(1 for r in recs if r.get("correct"))
+               if recs else sum(1 for sc in s.day_scores if sc >= 1.0))
 
-    if wrong:
-        lines = "\n".join(f"• {_esc(t)} — ошибок {w} из {counts[t]}"
-                          for t, w in wrong.items())
-        mistakes_block = "Ошибки по темам:\n" + lines
-    else:
-        mistakes_block = "Ошибок нет 🎉"
+    header = (f"🧑‍🎓 <b>{_esc(who)}</b> — полный отчёт за день\n"
+              f"Итог: {avg:.0%} ({correct} из {total} верно)")
 
-    text = (f"🧑‍🎓 <b>{_esc(who)}</b> завершил(а) дневной набор\n"
-            f"Итог дня: {avg:.0%} ({correct} из {total} верно)\n\n"
-            f"{mistakes_block}")
-    try:
-        await bot.send_message(admin, text, parse_mode="HTML")
-    except Exception as e:  # уведомление не должно ломать поток ученика
-        print(f"[notify_admin] не удалось отправить администратору {admin}: {e}")
+    blocks: list[str] = []
+    for i, r in enumerate(recs, 1):
+        icon = "✅" if r.get("correct") else "❌"
+        ans = _esc(r.get("answer", "")) or "—"
+        part = (f"\n<b>{i}. {icon}</b> <i>{_esc(r.get('topic', ''))}</i>\n"
+                f"{_esc(r.get('stem', ''))}\n"
+                f"Ответ ученика: {ans}")
+        if not r.get("correct") and r.get("ref"):
+            part += f"\n✔ Правильно: {_esc(r['ref'])}"
+        blocks.append(part)
+
+    await _send_admin_chunks(bot, admin, header, blocks)
+
+
+async def _send_admin_chunks(bot, admin: int, header: str, blocks: list[str],
+                             limit: int = 3500) -> None:
+    """Собирает header + блоки в сообщения ≤ limit символов и шлёт их по очереди."""
+    messages: list[str] = []
+    cur = header
+    for b in blocks:
+        if len(cur) + len(b) + 1 > limit:
+            messages.append(cur)
+            cur = ""
+        cur += ("\n" if cur else "") + b
+    if cur:
+        messages.append(cur)
+    for msg in messages:
+        try:
+            await bot.send_message(admin, msg, parse_mode="HTML")
+        except Exception as e:  # отчёт не должен ломать поток ученика
+            print(f"[notify_admin] не удалось отправить администратору {admin}: {e}")
 
 
 @router.callback_query(F.data.startswith("tog:"))
@@ -416,7 +435,27 @@ async def _grade_and_advance(chat_id: int, bot, answer: str) -> None:
     verdict = checker.check(task, answer, judge=_judge)
     userstore.save_attempt(chat_id, task.id, int(task.task_type), task.topic,
                            verdict.score, verdict.needs_review)
+    s.records.append(_answer_record(task, answer, verdict))   # для отчёта преподавателю
     await bot.send_message(chat_id, render_verdict(verdict), parse_mode="HTML")
     s.advance(verdict.score)
     store.save(s)
     await _send_current(chat_id, bot)
+
+
+def _answer_record(task: Task, answer: str, verdict: Verdict) -> dict:
+    """Запись одного ответа для подробного отчёта: вопрос, ответ ученика, верность, эталон."""
+    p = task.payload
+    opts = p.get("options") or []
+    if opts:                                  # MCQ — показываем выбранный вариант текстом
+        m = re.search(r"\d+", answer or "")
+        idx = int(m.group()) if m else 0
+        user_disp = opts[idx - 1] if 0 < idx <= len(opts) else (answer or "")
+    else:                                     # открытый ответ — как ввёл ученик
+        user_disp = (answer or "").strip()
+    return {
+        "topic": task.topic,
+        "stem": p.get("stem") or p.get("instruction") or "",
+        "answer": user_disp,
+        "correct": bool(verdict.correct),
+        "ref": verdict.reference_answer or "",
+    }

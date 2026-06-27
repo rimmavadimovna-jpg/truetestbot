@@ -428,7 +428,8 @@ def grade_quiz(task: Task, ans: str, judge=None) -> Verdict:
         crit = [CriterionResult(
             name="Выбор варианта", passed=ok, source="reference",
             detail=("верно" if ok else f"правильный ответ: {correct}) {correct_text}"))]
-        return _mk(1.0 if ok else 0.0, crit, ref=ref, rule=task.source)
+        # rule=None: у QUIZ источник — внутренний путь к файлу, не правило для ученика
+        return _mk(1.0 if ok else 0.0, crit, ref=ref, rule=None)
 
     # Открытый ответ
     expected = a.get("answer_text", "")
@@ -436,7 +437,7 @@ def grade_quiz(task: Task, ans: str, judge=None) -> Verdict:
     ref = expected + (f"\n{expl}" if expl else "")
     crit = [CriterionResult(name="Ответ", passed=ok, source="reference",
                             detail=("верно" if ok else f"правильный ответ: {expected}"))]
-    return _mk(1.0 if ok else 0.0, crit, ref=ref, rule=task.source)
+    return _mk(1.0 if ok else 0.0, crit, ref=ref, rule=None)
 
 
 _GRADERS[TaskType.QUIZ] = grade_quiz
