@@ -256,9 +256,14 @@ async def send_catchup(chat_id: int, bot) -> None:
     # какой это по счёту день догона (1..CATCHUP_DAYS): счётчик идёт от CATCHUP_DAYS к 0
     remaining = userstore.get_catchup(chat_id)
     catchup_day = assembler.CATCHUP_DAYS - remaining + 1
-    day = assembler.get_course_day(chat_id)
+    # День курса для догона. Если course_day дошёл до конца курса (>= 15 — курс
+    # «пройден» по внутреннему счётчику, который догон сам же двигает вперёд),
+    # циклически возвращаемся к началу, иначе course_day_set вернёт пустой список
+    # и придут ТОЛЬКО доп. задания без курсовых. Перенос по модулю гарантирует,
+    # что 9 курсовых («старых») заданий приходят каждый день догона.
+    day = assembler.get_course_day(chat_id) % assembler.COURSE_DAYS
     conn = _conn()
-    tasks = assembler.build_course_today(conn, chat_id)   # полный набор дня курса
+    tasks = assembler.course_day_set(conn, day)           # полный набор дня курса (с цикл. переносом)
     conn.close()
     extras = assembler.catchup_extra_set(catchup_day)     # полный блок доп. заданий дня догона
     all_tasks = tasks + extras

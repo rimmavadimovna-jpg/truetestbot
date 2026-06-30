@@ -78,6 +78,27 @@ def test_catchup_advances_each_call_without_completion(clean_kv):
     assert userstore.get_catchup(cid) == 0
 
 
+def test_catchup_course_tasks_present_even_if_course_finished(clean_kv):
+    """Регрессия: при course_day >= 15 курсовые («старые») задания не должны пропадать.
+
+    Раньше build_course_today возвращал [] и приходили только 8 доп. заданий.
+    Теперь день курса берётся по модулю, поэтому 9 курсовых + 8 доп. = 17.
+    """
+    cid = 2024
+    userstore.ensure_user(cid)
+    userstore.set_user_field(cid, "course_day", 15)        # курс пройден по счётчику
+    userstore.set_catchup(cid, assembler.CATCHUP_DAYS)
+    bot = FakeBot()
+    asyncio.run(handlers.send_catchup(cid, bot))
+
+    s = handlers.store.get(cid)
+    extra_n = len(assembler.catchup_extra_set(1))           # 8
+    assert len(s.tasks) == 9 + extra_n                      # 9 курсовых + 8 доп.
+    intro = next(t for _, t in bot.messages if "Догоняем" in t)
+    assert "вопросов курса" in intro                        # курсовые задания есть в анонсе
+    assert "Дополнительные задания на сегодня" not in intro
+
+
 def test_catchup_extra_set_loads_all_days(clean_kv):
     """Каждый день догона даёт 8 автопроверяемых QUIZ-заданий (MCQ + открытые)."""
     for d in range(1, assembler.CATCHUP_DAYS + 1):
