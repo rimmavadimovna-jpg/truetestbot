@@ -64,12 +64,12 @@ def test_catchup_advances_each_call_without_completion(clean_kv):
     for _ in range(3):
         asyncio.run(handlers.send_catchup(cid, bot))
 
-    # Каждый вызов должен был выдать новый день курса (1 → 2 → 3).
+    # Интро нумеруется по дню догона: catchup 3→2→1 ⇒ дни 5, 6, 7 из 7.
     intros = [t for _, t in bot.messages if "Догоняем пропущенное" in t]
     assert len(intros) == 3
-    assert "день 1 из" in intros[0]
-    assert "день 2 из" in intros[1]
-    assert "день 3 из" in intros[2]
+    assert "день 5 из 7" in intros[0]
+    assert "день 6 из 7" in intros[1]
+    assert "день 7 из 7" in intros[2]
 
     # Прогресс продвинулся на 2 (после 1-го набора стоим на дне 0,
     # каждый следующий вызов перешагивает незавершённый набор).
@@ -97,6 +97,29 @@ def test_catchup_course_tasks_present_even_if_course_finished(clean_kv):
     intro = next(t for _, t in bot.messages if "Догоняем" in t)
     assert "вопросов курса" in intro                        # курсовые задания есть в анонсе
     assert "Дополнительные задания на сегодня" not in intro
+    # интро нумеруется по догону (1 из 7), а НЕ «день 15 из 15»
+    assert f"день 1 из {assembler.CATCHUP_DAYS}" in intro
+    assert "из 15" not in intro
+
+
+def test_catchup_finish_message_not_last_course_day(clean_kv):
+    """При course_day >= 15 завершение дня догона не пишет «последний день курса»."""
+    cid = 3030
+    userstore.ensure_user(cid)
+    userstore.set_user_field(cid, "course_day", 15)        # курс «пройден» по счётчику
+    userstore.set_catchup(cid, assembler.CATCHUP_DAYS)     # 7 дней догона
+    bot = FakeBot()
+    asyncio.run(handlers.send_catchup(cid, bot))           # выдан день 1, catchup → 6
+
+    # проходим весь набор (любые ответы) до конца дня
+    s = handlers.store.get(cid)
+    for _ in range(len(s.tasks)):
+        asyncio.run(handlers._grade_and_advance(cid, bot, "1"))
+
+    finish = next(t for _, t in bot.messages if "Итог дня" in t)
+    assert "последний день курса" not in finish
+    assert "догон" in finish.lower()                       # сообщение про догон
+    assert "осталось дней: 6" in finish                    # ещё 6 дней догона впереди
 
 
 def test_catchup_extra_set_loads_all_days(clean_kv):
@@ -234,8 +257,8 @@ def test_catchup_after_completion_does_not_skip(clean_kv):
     handlers.store.clear(cid)
     assert userstore.get_course_day(cid) == 1
 
-    asyncio.run(handlers.send_catchup(cid, bot))   # должен выдать день 2, не день 3
+    asyncio.run(handlers.send_catchup(cid, bot))   # догон-день 7; курсовой контент — индекс 1
     intros = [t for _, t in bot.messages if "Догоняем пропущенное" in t]
-    assert "день 2 из" in intros[1]
-    # Незавершённой сессии не было → лишнего перешагивания нет.
+    assert "день 7 из 7" in intros[1]              # интро — по дню догона (catchup 1)
+    # Незавершённой сессии не было → course_day не перешагнул (остался 1, а не 2).
     assert userstore.get_course_day(cid) == 1

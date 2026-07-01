@@ -273,12 +273,15 @@ async def send_catchup(chat_id: int, bot) -> None:
             chat_id, "🎓 Курс из 15 дней пройден! Можно начать заново — напишите /restart.")
         return
     store.start(chat_id, all_tasks)
+    # Нумерацию показываем по расписанию ДОГОНА (N из 7), а не по счётчику курса —
+    # иначе при course_day >= 15 интро ошибочно читается как «последний день».
     if tasks:
-        intro = (f"📚 Догоняем пропущенное — день {day + 1} из {assembler.COURSE_DAYS}: "
+        intro = (f"📚 Догоняем пропущенное — день {catchup_day} из {assembler.CATCHUP_DAYS}: "
                  f"{len(tasks)} вопросов курса")
         intro += (f" + {len(extras)} доп. заданий. Поехали!" if extras else ". Поехали!")
     else:
-        intro = f"📚 Дополнительные задания на сегодня: {len(extras)}. Поехали!"
+        intro = (f"📚 Догон, день {catchup_day} из {assembler.CATCHUP_DAYS}: "
+                 f"{len(extras)} заданий. Поехали!")
     await bot.send_message(chat_id, intro)
     await _send_current(chat_id, bot)
     userstore.decrement_catchup(chat_id)
@@ -304,10 +307,20 @@ async def _finish_day(chat_id: int, bot) -> None:
     s = store.get(chat_id)
     if s and s.day_scores:
         avg = sum(s.day_scores) / len(s.day_scores)
-        assembler.advance_course_day(chat_id)             # переходим к следующему дню курса
-        new_day = assembler.get_course_day(chat_id)
-        tail = ("Это был последний день курса! 🎓" if new_day >= assembler.COURSE_DAYS
-                else "Возвращайтесь завтра за следующим набором — или сразу /today.")
+        # день догона? (в наборе есть доп. задания — синтетические id >= 700000)
+        is_catchup = any(t.id >= 700000 for t in s.tasks)
+        assembler.advance_course_day(chat_id)
+        if is_catchup:
+            # расписание догона считаем по счётчику catchup (он уже уменьшен в send_catchup),
+            # а НЕ по course_day — иначе ошибочно «последний день курса».
+            remaining = userstore.get_catchup(chat_id)
+            tail = (f"Возвращайтесь завтра за следующим набором догона (осталось дней: {remaining})."
+                    if remaining > 0 else
+                    "Догон завершён! 🎓 Дальше — обычный ход курса.")
+        else:
+            new_day = assembler.get_course_day(chat_id)
+            tail = ("Это был последний день курса! 🎓" if new_day >= assembler.COURSE_DAYS
+                    else "Возвращайтесь завтра за следующим набором — или сразу /today.")
         await bot.send_message(
             chat_id, f"🏁 Итог дня: {avg:.0%} верных. {tail}\n/stats — прогресс по темам.")
         await _notify_admin(bot, chat_id, s, avg)
